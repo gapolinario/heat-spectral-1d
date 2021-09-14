@@ -79,7 +79,7 @@ int main(int argc, char **argv){
 	// Time resolution must be roughly
 	// dt = 0.1 dx^2 / (pi^2 * nu * Ltot^2)
 	// So that every Fourier mode is well resolved
-	dt = .1*dx*dx/(PISQR*nu*Ltot*Ltot);
+	dt = .5*dx*dx/(PISQR*nu*Ltot*Ltot);
 	sqdt = sqrt(dt);
 	visc = 4.*PISQR*nu;
 	norm = 1./((double)(N));
