@@ -20,5 +20,9 @@ help: Makefile
 heat_1d: heat_1d.c
 	$(CC) $(CCFLAGS) -o $@.x $^ -lfftw3 -lm
 
+## heat_inplace: stochastic 1d heat equation, inplace FFTW transforms
+heat_inplace_1d: heat_inplace_1d.c
+	$(CC) $(CCFLAGS) -o $@.x $^ -lfftw3 -lm
+
 clean:
 	rm *.x

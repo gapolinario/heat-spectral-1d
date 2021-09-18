@@ -32,6 +32,8 @@ static inline void gen_force3D(double *fx, fftw_complex *gx, double *ker,
 	LI N, LI N2, double TPI3, double PIL2, double sqdx);
 static inline void euler_maruyama_step(fftw_complex *vx, fftw_complex *gx,
 	double *K2, LI N, LI N2, double dt, double sqdt, double visc, double f0);
+static inline void euler_implicit_step(fftw_complex *vx, fftw_complex *gx,
+	double *K2, LI N2, double dt, double sqdt, double visc, double f0);
 static inline void predictor_corrector_step(
 	fftw_complex *vx,	fftw_complex *gx, fftw_complex *tx,
 	double *K2, LI N, LI N2, double dt, double sqdt, double visc, double f0);
@@ -90,12 +92,8 @@ int main(int argc, char **argv){
 		error("vector K2");
 	if( (ker = (double*) malloc(sizeof(double) * N)) == NULL)
 		error("vector ker");
-  if( (fx = (double*) fftw_malloc(sizeof(double) * N)) == NULL)
-		error("vector fx");
-	if( (gx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2 )) == NULL)
+  if( (gx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2 )) == NULL)
 		error("vector gx");
-	if( (ux = (double*) fftw_malloc(sizeof(double) * N)) == NULL)
-		error("vector ux");
 	if( (vx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2 )) == NULL)
 		error("vector vx");
 	if( (tx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2)) == NULL)
@@ -111,6 +109,9 @@ int main(int argc, char **argv){
 		error("vector varkN");
 	if( (vardv = (double*) malloc(sizeof(double) * numsteps)) == NULL)
 		error("vector vardv");
+
+	fx = (double *) gx;
+	ux = (double *) vx;
 
 	/** initialize FFTW **/
 	// Force vector transforms
@@ -178,6 +179,7 @@ int main(int argc, char **argv){
 		// this works for the heat equation
 
 		//euler_maruyama_step(vx,gx,K2,N,N2,dt,sqdt,visc,f0);
+		euler_implicit_step(vx,gx,K2,N2,dt,sqdt,visc,f0);
 		//predictor_corrector_step(vx,gx,tx,K2,N,N2,dt,sqdt,visc,f0);
 
 		// to verify that the variance of each fourier mode follows theory
@@ -235,9 +237,7 @@ int main(int argc, char **argv){
   fftw_destroy_plan(plan_fx_b);
 	fftw_destroy_plan(plan_ux_f);
   fftw_destroy_plan(plan_ux_b);
-	fftw_free(fx);
 	fftw_free(gx);
-	fftw_free(ux);
 	fftw_free(vx);
 	fftw_free(tx);
 	FREEP(ker);
@@ -313,6 +313,24 @@ static inline void euler_maruyama_step(fftw_complex *vx, fftw_complex *gx,
 	// add stochastic force
 	for(i=0;i<N2;i++){
 		vx[i] += f0sqdt * gx[i];
+	}
+
+}
+
+static inline void euler_implicit_step(fftw_complex *vx, fftw_complex *gx,
+	double *K2, LI N2, double dt, double sqdt, double visc, double f0){
+
+	LI i;
+	double viscdt = dt*visc;
+	double f0sqdt = sqrt(f0*dt);
+
+	// implicit step
+	// u_n+1 = (u_n + sqdt f_n) / (1 + 4 pi^2 nu k^2 dt)
+	for(i=0;i<N2;i++){
+		vx[i] += f0sqdt*fx[i];
+	}
+	for(i=0;i<N2;i++){
+		vx[i] *= 1./(1.+viscdt*K2[i]);
 	}
 
 }
