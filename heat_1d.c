@@ -51,7 +51,7 @@ int main(int argc, char **argv){
 	fftw_complex *gx, *vx, *tx; /* arrays */
 	double dx,sqdx,Ltot,L,dt,sqdt,nu,visc,f0,norm;
 	// observables
-	double *varf, *varx, *vark1, *varkN;
+	double *varf, *varx, *vark1, *varkN, *vardv;
 
 	if ( argc < 7 ){
     printf("Required arguments: seed N numsteps L nu f0 \n");
@@ -79,7 +79,7 @@ int main(int argc, char **argv){
 	// Time resolution must be roughly
 	// dt = 0.1 dx^2 / (pi^2 * nu * Ltot^2)
 	// So that every Fourier mode is well resolved
-	dt = .5*dx*dx/(PISQR*nu*Ltot*Ltot);
+	dt = .12*dx*dx/(PISQR*nu*Ltot*Ltot);
 	sqdt = sqrt(dt);
 	visc = 4.*PISQR*nu;
 	norm = 1./((double)(N));
@@ -113,6 +113,8 @@ int main(int argc, char **argv){
 		error("vector vark1");
 	if( (varkN = (double*) malloc(sizeof(double) * numsteps)) == NULL)
 		error("vector varkN");
+	if( (vardv = (double*) malloc(sizeof(double) * numsteps)) == NULL)
+		error("vector vardv");
 
 	/** initialize FFTW **/
 	// Force vector transforms
@@ -167,6 +169,9 @@ int main(int argc, char **argv){
 	for(it=0;it<numsteps;it++){
 		varkN[it] = 0.;
 	}
+	for(it=0;it<numsteps;it++){
+		vardv[it] = 0.;
+	}
 
 	for(it=0;it<numsteps;it++){
 
@@ -184,9 +189,24 @@ int main(int argc, char **argv){
 		vark1[it] = SQR(cabs(vx[1]));
 		varkN[it] = SQR(cabs(vx[15]));
 
+		// total variance of Fourier modes
 		for(i=0;i<N2;i++)
 			varf[it] += SQR(cabs(vx[i]));
 
+		// variance of velocity gradient
+		// we can reuse g/f and its transform for that
+
+		for(i=0;i<N2;i++)
+			gx[i] = I*TWOPI*K[i]*vx[i];
+
+		// gradient back to real space
+		fftw_execute(plan_fx_b);
+
+		// save values, variance of velocity gradient
+		for(i=1;i<N;i++)
+			vardv[it] += SQR(fx[i]);
+
+		// backup velocities in Fourier space
 		for(i=0;i<N2;i++)
 			tx[i] = vx[i];
 
@@ -201,13 +221,19 @@ int main(int argc, char **argv){
 
 	}
 
+	// normalize spatial avg. variance
 	for(it=0;it<numsteps;it++)
 		varx[it] *= norm;
 
-	write_real1D_array(varx,pid,N,numsteps,L,nu,f0,'x');
-	write_real1D_array(varf,pid,N,numsteps,L,nu,f0,'f');
+	// normalize spatial avg. variance of gradient
+	for(it=0;it<numsteps;it++)
+		vardv[it] *= norm;
+
+	write_real1D_array(varx, pid,N,numsteps,L,nu,f0,'x');
+	write_real1D_array(varf, pid,N,numsteps,L,nu,f0,'f');
 	write_real1D_array(vark1,pid,N,numsteps,L,nu,f0,'1');
 	write_real1D_array(varkN,pid,N,numsteps,L,nu,f0,'N');
+	write_real1D_array(vardv,pid,N,numsteps,L,nu,f0,'d');
 
 	fftw_destroy_plan(plan_fx_f);
   fftw_destroy_plan(plan_fx_b);
@@ -225,6 +251,7 @@ int main(int argc, char **argv){
 	FREEP(varf);
 	FREEP(vark1);
 	FREEP(varkN);
+	FREEP(vardv);
 
 	printf("\n\n And we are done \n\n\a");
 
