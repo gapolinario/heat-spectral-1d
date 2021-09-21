@@ -24,5 +24,9 @@ heat_1d: heat_1d.c
 heat_inplace_1d: heat_inplace_1d.c
 	$(CC) $(CCFLAGS) -o $@.x $^ -lfftw3 -lm
 
+## heat_jentzen: as above, with jentzen algorithm
+heat_jentzen_1d: heat_jentzen_1d.c
+	$(CC) $(CCFLAGS) -o $@.x $^ -lfftw3 -lm
+
 clean:
 	rm *.x

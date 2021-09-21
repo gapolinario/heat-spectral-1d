@@ -28,15 +28,10 @@ fftw_plan plan_ux_f, plan_ux_b;
 double gauss_kernel(double k, double PIL2);
 static inline void write_real1D_array(double *y, LI pid, LI N, LI numsteps,
 	double L,	double nu, double f0, char axis);
-static inline void gen_force3D(double *fx, fftw_complex *gx, double *ker,
-	LI N, LI N2, double TPI3, double PIL2, double sqdx);
-static inline void euler_maruyama_step(fftw_complex *vx, fftw_complex *gx,
-	double *K2, LI N, LI N2, double dt, double sqdt, double visc, double f0);
-static inline void euler_implicit_step(fftw_complex *vx, fftw_complex *gx,
-	double *K2, LI N2, double dt, double sqdt, double visc, double f0);
-static inline void predictor_corrector_step(
-	fftw_complex *vx,	fftw_complex *gx, fftw_complex *tx,
-	double *K2, LI N, LI N2, double dt, double sqdt, double visc, double f0);
+static inline void jentzen_kloeden_winkel_step(fftw_complex *vx,
+	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2);
+static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex *gx,
+	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2);
 
 int main(int argc, char **argv){
 
@@ -48,9 +43,9 @@ int main(int argc, char **argv){
 	// u is the velocity vector, in real space
 	// t is a temp array, in Fourier space, used in predictor-corrector algorithm
 	double *fx, *ux;
-	double *K, *K2, *ker;
-	fftw_complex *gx, *vx, *tx; /* arrays */
-	double dx,sqdx,Ltot,L,dt,sqdt,nu,visc,f0,norm;
+	double *K;
+	fftw_complex *gx, *vx; /* arrays */
+	double dx,sqdx,Ltot,L,dt,nu,visc,f0,norm;
 	// observables
 	double *varf, *varx, *vark1, *varkN, *vardv;
 
@@ -80,24 +75,17 @@ int main(int argc, char **argv){
 	// Time resolution must be roughly
 	// dt = 0.1 dx^2 / (pi^2 * nu * Ltot^2)
 	// So that every Fourier mode is well resolved
-	dt = .12*dx*dx/(PISQR*nu*Ltot*Ltot);
-	sqdt = sqrt(dt);
+	dt =   .1*dx*dx/(PISQR*nu*Ltot*Ltot);
 	visc = 4.*PISQR*nu;
 	norm = 1./((double)(N));
 
 	// Allocating necessary arrays
 	if( (K = (double*) malloc(sizeof(double) * N)) == NULL)
 		error("vector K");
-	if( (K2 = (double*) malloc(sizeof(double) * N)) == NULL)
-		error("vector K2");
-	if( (ker = (double*) malloc(sizeof(double) * N)) == NULL)
-		error("vector ker");
-  if( (gx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2 )) == NULL)
+	if( (gx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2 )) == NULL)
 		error("vector gx");
 	if( (vx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2 )) == NULL)
 		error("vector vx");
-	if( (tx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * N2)) == NULL)
-		error("vector tx");
 
 	if( (varx = (double*) malloc(sizeof(double) * numsteps)) == NULL)
 		error("vector varx");
@@ -129,10 +117,6 @@ int main(int argc, char **argv){
 	  K[N-i]=-(double)i/Ltot;
   }
 
-	for(i=0;i<N;i++){
-	  K2[i]=SQR(K[i]);
-  }
-
 	/* correlation function of external force, at large scales
 	   Fourier transform convention: {0,-2 Pi} (Mathematica)
 	   Cf(x) = exp(-x^2/(2 L^2))
@@ -141,13 +125,6 @@ int main(int argc, char **argv){
 	*/
 	TPI3 = pow(TWOPI,0.25)*pow(L,0.5); // (2 pi)^(1/4) * L^(1/2)
 	PIL2 = PISQR*L*L; // pi^2*L^2
-
-	// Assign kernel operator directly in Fourier space
-	// Imag. components are zero
-	// frequencies are i/Ltot, normalization is eps = 1/Ltot
-	for(i=0;i<N;i++){
-		ker[i] = gauss_kernel(K[i],PIL2);
-	}
 
 	// set initial condition in Fourier space, v=0
 	for(i=0;i<N2;i++){
@@ -172,15 +149,8 @@ int main(int argc, char **argv){
 
 	for(it=0;it<numsteps;it++){
 
-		// generate random force, correlated in space
-		gen_force3D(fx,gx,ker,N,N2,TPI3,PIL2,sqdx);
-
-		// time evolution is done in Fourier space only
-		// this works for the heat equation
-
-		//euler_maruyama_step(vx,gx,K2,N,N2,dt,sqdt,visc,f0);
-		//euler_implicit_step(vx,gx,K2,N2,dt,sqdt,visc,f0);
-		predictor_corrector_step(vx,gx,tx,K2,N,N2,dt,sqdt,visc,f0);
+		//jentzen_kloeden_winkel_step(vx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2);
+		jentzen_kloeden_winkel_step_2(vx,gx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2);
 
 		// to verify that the variance of each fourier mode follows theory
 		// 0 <= kx < N, 0 <= ky < N, 0 <= kz < N//2+1
@@ -206,7 +176,7 @@ int main(int argc, char **argv){
 
 		// backup velocities in Fourier space
 		for(i=0;i<N2;i++)
-			tx[i] = vx[i];
+			gx[i] = vx[i];
 
 		// velocities back to real space
 		fftw_execute(plan_ux_b);
@@ -215,7 +185,7 @@ int main(int argc, char **argv){
 			varx[it] += SQR(ux[i]);
 
 		for(i=0;i<N2;i++)
-			vx[i] = tx[i];
+			vx[i] = gx[i];
 
 	}
 
@@ -239,10 +209,7 @@ int main(int argc, char **argv){
   fftw_destroy_plan(plan_ux_b);
 	fftw_free(gx);
 	fftw_free(vx);
-	fftw_free(tx);
-	FREEP(ker);
 	FREEP(K);
-	FREEP(K2);
 	FREEP(varx);
 	FREEP(varf);
 	FREEP(vark1);
@@ -278,106 +245,72 @@ static inline void write_real1D_array(double *y, LI pid, LI N, LI numsteps,
 	CLOSEFILE(fout);
 }
 
-static inline void gen_force3D(double *fx, fftw_complex *gx, double *ker,
-	LI N, LI N2, double TPI3, double PIL2, double sqdx){
+// Jentzen, Kloeden and Winkel, Annals of Applied Probability 21.3 (2011): 908-950
+// see eq. 21
+static inline void jentzen_kloeden_winkel_step(fftw_complex *vx,
+	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2){
 
 	LI i;
-	double cte1;
+	double cte = dt*visc;
+	double ctf = sqrt(f0)*TPI3;
+	double tmp;
 
-	// Assign random vector dW (white noise increments)
-	for(i=0;i<N;i++){
-		fx[i] = RAND() * sqdx;
-	}
+	// zero mode
+	cte    = sqrt(dt)*ctf;
+	// stochastic part
+	vx[0] += cte * RAND();
 
-	fftw_execute(plan_fx_f);
+	// not sure if it's ctf or 1/ctf
+	// the bk term in eq. 21 is the most confusing
+	for(i=1;i<N2;i++){
+		tmp  = visc*SQR(K[i]);
+		cte  = sqrt(.5*(1.-exp(-2.*tmp*dt))/tmp);
+		cte *= ctf*gauss_kernel(K[i],PIL2);
 
-	for(i=0;i<N2;i++){
-		cte1 = TPI3 * ker[i];
-		gx[i] *= cte1;
+		// deterministic part
+		vx[i] *= exp(-tmp*dt);
+		// stochastic part
+		vx[i] += cte * RAND();
 	}
 
 }
 
-static inline void euler_maruyama_step(fftw_complex *vx, fftw_complex *gx,
-	double *K2, LI N, LI N2, double dt, double sqdt, double visc, double f0){
+// Jentzen, Kloeden and Winkel, Annals of Applied Probability 21.3 (2011): 908-950
+// see eq. 21
+static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex *gx,
+	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2){
 
 	LI i;
-	double viscdt = dt*visc;
-	double f0sqdt = sqrt(f0*dt);
+	double cte;
 
-	// deterministic evolution
-	for(i=0;i<N2;i++){
-		vx[i] -= viscdt * K2[i] * vx[i];
+	// zero mode
+	cte    = sqrt(dt*f0)*TPI3;
+	// stochastic part
+	vx[0] += cte * RAND();
+
+	cte = dt*visc;
+	// deterministic part
+	for(i=1;i<N2;i++){
+		gx[i] = exp(-cte*SQR(K[i]));
 	}
-
-	// add stochastic force
-	for(i=0;i<N2;i++){
-		vx[i] += f0sqdt * gx[i];
+	for(i=1;i<N2;i++){
+		vx[i] *= gx[i];
 	}
-
-}
-
-static inline void euler_implicit_step(fftw_complex *vx, fftw_complex *gx,
-	double *K2, LI N2, double dt, double sqdt, double visc, double f0){
-
-	LI i;
-	double viscdt = dt*visc;
-	double f0sqdt = sqrt(f0*dt);
-
-	// implicit step
-	// u_n+1 = (u_n + sqdt f_n) / (1 + 4 pi^2 nu k^2 dt)
-	for(i=0;i<N2;i++){
-		vx[i] += f0sqdt*fx[i];
+	// stochastic part
+	cte = sqrt(f0)*TPI3;
+	for(i=1;i<N2;i++){
+		gx[i]  = cte*gauss_kernel(K[i],PIL2);
 	}
-	for(i=0;i<N2;i++){
-		vx[i] *= 1./(1.+viscdt*K2[i]);
+	cte = sqrt(.5/visc);
+	for(i=1;i<N2;i++){
+		gx[i] *= cte * sqrt((1.-exp(-2.*visc*dt*SQR(K[i])))/SQR(K[i]));
 	}
-
-}
-
-static inline void predictor_corrector_step(
-	fftw_complex *vx,	fftw_complex *gx, fftw_complex *tx,
-	double *K2, LI N, LI N2, double dt, double sqdt, double visc, double f0){
-// order 1.0 predictor corrector algorithm
-// see Kloeden-Platen p. 502
-
-	LI i;
-	double viscdt = visc*dt;
-	double f0sqdt = sqrt(f0*dt);
-
-	// predictor step
-	// t* are temp arrays, to store predictor array
-
-	// initial setup of predictor step
-	for(i=0;i<N2;i++){
-		tx[i] = vx[i];
+	for(i=1;i<N2;i++){
+		gx[i] *= RAND();
 	}
-
-	// deterministic evolution
-	for(i=0;i<N2;i++){
-		tx[i] -= viscdt * K2[i] * vx[i];
-	}
-
-	// add stochastic force
-	for(i=0;i<N2;i++){
-		tx[i] += f0sqdt * gx[i];
-	}
-
-	// corrector step
-
-	// deterministic evolution, half step using last velocity array
-	for(i=0;i<N2;i++){
-		vx[i] -= .5 * viscdt * K2[i] * vx[i];
-	}
-
-	// deterministic evolution, half step using predictor array
-	for(i=0;i<N2;i++){
-		vx[i] -= .5 * viscdt * K2[i] * tx[i];
-	}
-
-	// add stochastic force
-	for(i=0;i<N2;i++){
-		vx[i] += f0sqdt * gx[i];
+	for(i=1;i<N2;i++){
+		// stochastic part
+		vx[i] += gx[i];
 	}
 
 }
