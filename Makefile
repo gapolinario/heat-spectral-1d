@@ -11,10 +11,21 @@ CC = gcc
 MPICC = mpicc
 CCFLAGS = $(OPTI) $(WARN) $(STD)
 
+# read path from file
+file := phy_path
+Phy := $(shell cat ${file})
+
 .PHONY : help move
 
 help: Makefile
 	@sed -n 's/^##//p' $<
+
+## move : move .c and .sh files from local to remote
+move:
+	scp Makefile $(Phy):/home/gbritoap/heat_1d/
+	scp *.c $(Phy):/home/gbritoap/heat_1d/
+	scp *.py $(Phy):/home/gbritoap/heat_1d/
+	scp *.sh $(Phy):/home/gbritoap/heat_1d/
 
 ## heat: stochastic 1d heat equation
 heat_1d: heat_1d.c

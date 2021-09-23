@@ -1,3 +1,6 @@
+// $ make heat_jentzen_1d
+// $ ./heat_jentzen_1d.x
+// $ time seq 0 99 | xargs -I{} -P 7 ./heat_jentzen_1d.x {} 9 1000000 .1 .01 1. >/dev/null
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -11,13 +14,14 @@
 #define SQR(x)        ((x)*(x))
 #define FREEP(x)      {free(x); x = NULL;}
 #define sfsg          {printf("\n\n So far, so good...");getchar();printf("\n\n");}
-#define RAND()        (2.*RCTE*rand()/DRAND-RCTE)
+//#define RAND()        (2.*RCTE*rand()/DRAND-RCTE) // uniform random variable, var=1
+#define RAND()        (ltqnorm(rand()/DRAND))
 
 /****** global variables ******/
 
 typedef long int LI;
 typedef unsigned long int ULI;
-double DRAND=(double)RAND_MAX;
+double DRAND=(double)RAND_MAX + 1.;
 double RCTE=sqrt(3.);
 static const long double TWOPI =  6.2831853071795864769252867665590058L;
 static const long double PISQR =  9.8696044010893586188344909998761511L;
@@ -26,6 +30,7 @@ fftw_plan plan_ux_f, plan_ux_b;
 
 /****** functions ******/
 double gauss_kernel(double k, double PIL2);
+double ltqnorm(double p);
 static inline void write_real1D_array(double *y, LI pid, LI N, LI numsteps,
 	double L,	double nu, double f0, char axis);
 static inline void jentzen_kloeden_winkel_step(fftw_complex *vx,
@@ -75,7 +80,7 @@ int main(int argc, char **argv){
 	// Time resolution must be roughly
 	// dt = 0.1 dx^2 / (pi^2 * nu * Ltot^2)
 	// So that every Fourier mode is well resolved
-	dt =   .1*dx*dx/(PISQR*nu*Ltot*Ltot);
+	dt =   .8*dx*dx/(PISQR*nu*Ltot*Ltot);
 	visc = 4.*PISQR*nu;
 	norm = 1./((double)(N));
 
@@ -313,4 +318,84 @@ static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex 
 		vx[i] += gx[i];
 	}
 
+}
+
+// standard normal random variable
+// see https://gist.github.com/gapolinario/b7a43a7fb19179c7d571497895f1b245
+
+/* Coefficients in rational approximations. */
+static const double a[] =
+{
+	-3.969683028665376e+01,
+	 2.209460984245205e+02,
+	-2.759285104469687e+02,
+	 1.383577518672690e+02,
+	-3.066479806614716e+01,
+	 2.506628277459239e+00
+};
+
+static const double b[] =
+{
+	-5.447609879822406e+01,
+	 1.615858368580409e+02,
+	-1.556989798598866e+02,
+	 6.680131188771972e+01,
+	-1.328068155288572e+01
+};
+
+static const double c[] =
+{
+	-7.784894002430293e-03,
+	-3.223964580411365e-01,
+	-2.400758277161838e+00,
+	-2.549732539343734e+00,
+	 4.374664141464968e+00,
+	 2.938163982698783e+00
+};
+
+static const double d[] =
+{
+	7.784695709041462e-03,
+	3.224671290700398e-01,
+	2.445134137142996e+00,
+	3.754408661907416e+00
+};
+
+#define LOW 0.02425
+#define HIGH 0.97575
+
+double ltqnorm(double p)
+{
+	double q, r;
+
+	if (p == 0.)
+	{
+		return -6.230260 /* minus "infinity" */;
+	}
+	else if (p == 1.)
+	{
+		return 6.230260 /* "infinity" */;
+	}
+	else if (p < LOW)
+	{
+		/* Rational approximation for lower region */
+		q = sqrt(-2*log(p));
+		return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+			((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+	}
+	else if (p > HIGH)
+	{
+		/* Rational approximation for upper region */
+		q  = sqrt(-2*log(1-p));
+		return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
+			((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+	}
+	else
+	{
+		/* Rational approximation for central region */
+    		q = p - 0.5;
+    		r = q*q;
+		return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q /
+			(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
+	}
 }

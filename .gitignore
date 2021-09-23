@@ -1,3 +1,4 @@
 *.x
 data/
 .ipynb_checkpoints/
+phy_path
