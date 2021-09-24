@@ -6,6 +6,8 @@
 #include <math.h>
 #include <complex.h>
 #include <fftw3.h>
+#include <gsl/gsl_rng.h>
+#include <gsl/gsl_randist.h>
 
 #define error(x)      {printf("\n\nError generating,creating or opening "x"\n\n");exit(-1);}
 #define errorrc(x)    {printf("\n\nError reading %s\nMaybe file does not exist\n\n",x);exit(-1);}
@@ -14,15 +16,11 @@
 #define SQR(x)        ((x)*(x))
 #define FREEP(x)      {free(x); x = NULL;}
 #define sfsg          {printf("\n\n So far, so good...");getchar();printf("\n\n");}
-//#define RAND()        (2.*RCTE*rand()/DRAND-RCTE) // uniform random variable, var=1
-#define RAND()        (ltqnorm(rand()/DRAND))
 
 /****** global variables ******/
 
 typedef long int LI;
 typedef unsigned long int ULI;
-double DRAND=(double)RAND_MAX + 1.;
-double RCTE=sqrt(3.);
 static const long double TWOPI =  6.2831853071795864769252867665590058L;
 static const long double PISQR =  9.8696044010893586188344909998761511L;
 fftw_plan plan_fx_f, plan_fx_b;
@@ -33,10 +31,12 @@ double gauss_kernel(double k, double PIL2);
 double ltqnorm(double p);
 static inline void write_real1D_array(double *y, LI pid, LI N, LI numsteps,
 	double L,	double nu, double f0, char axis);
-static inline void jentzen_kloeden_winkel_step(fftw_complex *vx,
+static inline void gen_force3D(double *fx, fftw_complex *gx, double *K,
+	LI N, LI N2, double TPI3, double PIL2, double sqdx, gsl_rng *rng);
+static inline void jentzen_kloeden_winkel_step(fftw_complex *vx, fftw_complex *gx,
 	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2);
 static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex *gx,
-	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2);
+	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2, gsl_rng *rng);
 
 int main(int argc, char **argv){
 
@@ -53,6 +53,7 @@ int main(int argc, char **argv){
 	double dx,sqdx,Ltot,L,dt,nu,visc,f0,norm;
 	// observables
 	double *varf, *varx, *vark1, *varkN, *vardv;
+	gsl_rng *rng = gsl_rng_alloc(gsl_rng_mt19937); // Mersenne Twister
 
 	if ( argc < 7 ){
     printf("Required arguments: seed N numsteps L nu f0 \n");
@@ -60,9 +61,8 @@ int main(int argc, char **argv){
   }
 
 	pid = atoi(argv[1]); // process id, for ensemble average
-	//time_t t;
-  /* Intializes random number generator */
-  srand((unsigned) 12345+pid);
+	// Initializes random number generator
+  gsl_rng_set(rng,12345+pid);
 
 	// Grid size
 	N = (LI) 1<<(atoi(argv[2])); // 1<<N = 2^N
@@ -80,7 +80,7 @@ int main(int argc, char **argv){
 	// Time resolution must be roughly
 	// dt = 0.1 dx^2 / (pi^2 * nu * Ltot^2)
 	// So that every Fourier mode is well resolved
-	dt =   .8*dx*dx/(PISQR*nu*Ltot*Ltot);
+	dt =   .5*dx*dx/(PISQR*nu*Ltot*Ltot);
 	visc = 4.*PISQR*nu;
 	norm = 1./((double)(N));
 
@@ -154,8 +154,9 @@ int main(int argc, char **argv){
 
 	for(it=0;it<numsteps;it++){
 
-		//jentzen_kloeden_winkel_step(vx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2);
-		jentzen_kloeden_winkel_step_2(vx,gx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2);
+		gen_force3D(fx,gx,K,N,N2,TPI3,PIL2,sqdx,rng);
+		jentzen_kloeden_winkel_step(vx,gx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2);
+		//jentzen_kloeden_winkel_step_2(vx,gx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2,rng);
 
 		// to verify that the variance of each fourier mode follows theory
 		// 0 <= kx < N, 0 <= ky < N, 0 <= kz < N//2+1
@@ -208,6 +209,8 @@ int main(int argc, char **argv){
 	write_real1D_array(varkN,pid,N,numsteps,L,nu,f0,'N');
 	write_real1D_array(vardv,pid,N,numsteps,L,nu,f0,'d');
 
+	gsl_rng_free( rng );
+
 	fftw_destroy_plan(plan_fx_f);
   fftw_destroy_plan(plan_fx_b);
 	fftw_destroy_plan(plan_ux_f);
@@ -250,32 +253,50 @@ static inline void write_real1D_array(double *y, LI pid, LI N, LI numsteps,
 	CLOSEFILE(fout);
 }
 
+static inline void gen_force3D(double *fx, fftw_complex *gx, double *K,
+	LI N, LI N2, double TPI3, double PIL2, double sqdx, gsl_rng *rng){
+
+	LI i;
+	double cte1;
+
+	// Assign random vector dW (white noise increments)
+	for(i=0;i<N;i++){
+		fx[i] = gsl_ran_gaussian( rng, 1. ) * sqdx;
+	}
+
+	fftw_execute(plan_fx_f);
+
+	for(i=0;i<N2;i++){
+		cte1 = TPI3 * gauss_kernel(K[i],PIL2);
+		gx[i] *= cte1;
+	}
+
+}
+
 // Jentzen, Kloeden and Winkel, Annals of Applied Probability 21.3 (2011): 908-950
 // see eq. 21
-static inline void jentzen_kloeden_winkel_step(fftw_complex *vx,
+static inline void jentzen_kloeden_winkel_step(fftw_complex *vx, fftw_complex *gx,
 	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2){
 
 	LI i;
 	double cte = dt*visc;
-	double ctf = sqrt(f0)*TPI3;
 	double tmp;
 
 	// zero mode
-	cte    = sqrt(dt)*ctf;
+	cte    = sqrt(dt*f0);
 	// stochastic part
-	vx[0] += cte * RAND();
+	vx[0] += cte * gx[0];
 
 	// not sure if it's ctf or 1/ctf
 	// the bk term in eq. 21 is the most confusing
 	for(i=1;i<N2;i++){
 		tmp  = visc*SQR(K[i]);
-		cte  = sqrt(.5*(1.-exp(-2.*tmp*dt))/tmp);
-		cte *= ctf*gauss_kernel(K[i],PIL2);
+		cte  = sqrt(.5*f0*(1.-exp(-2.*tmp*dt))/tmp);
 
 		// deterministic part
 		vx[i] *= exp(-tmp*dt);
 		// stochastic part
-		vx[i] += cte * RAND();
+		vx[i] += cte * gx[i];
 	}
 
 }
@@ -283,7 +304,7 @@ static inline void jentzen_kloeden_winkel_step(fftw_complex *vx,
 // Jentzen, Kloeden and Winkel, Annals of Applied Probability 21.3 (2011): 908-950
 // see eq. 21
 static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex *gx,
-	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2){
+	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2, gsl_rng *rng){
 
 	LI i;
 	double cte;
@@ -291,7 +312,7 @@ static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex 
 	// zero mode
 	cte    = sqrt(dt*f0)*TPI3;
 	// stochastic part
-	vx[0] += cte * RAND();
+	vx[0] += cte * gsl_ran_gaussian( rng, 1. );
 
 	cte = dt*visc;
 	// deterministic part
@@ -311,91 +332,11 @@ static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex 
 		gx[i] *= cte * sqrt((1.-exp(-2.*visc*dt*SQR(K[i])))/SQR(K[i]));
 	}
 	for(i=1;i<N2;i++){
-		gx[i] *= RAND();
+		gx[i] *= gsl_ran_gaussian( rng, 1. );
 	}
 	for(i=1;i<N2;i++){
 		// stochastic part
 		vx[i] += gx[i];
 	}
 
-}
-
-// standard normal random variable
-// see https://gist.github.com/gapolinario/b7a43a7fb19179c7d571497895f1b245
-
-/* Coefficients in rational approximations. */
-static const double a[] =
-{
-	-3.969683028665376e+01,
-	 2.209460984245205e+02,
-	-2.759285104469687e+02,
-	 1.383577518672690e+02,
-	-3.066479806614716e+01,
-	 2.506628277459239e+00
-};
-
-static const double b[] =
-{
-	-5.447609879822406e+01,
-	 1.615858368580409e+02,
-	-1.556989798598866e+02,
-	 6.680131188771972e+01,
-	-1.328068155288572e+01
-};
-
-static const double c[] =
-{
-	-7.784894002430293e-03,
-	-3.223964580411365e-01,
-	-2.400758277161838e+00,
-	-2.549732539343734e+00,
-	 4.374664141464968e+00,
-	 2.938163982698783e+00
-};
-
-static const double d[] =
-{
-	7.784695709041462e-03,
-	3.224671290700398e-01,
-	2.445134137142996e+00,
-	3.754408661907416e+00
-};
-
-#define LOW 0.02425
-#define HIGH 0.97575
-
-double ltqnorm(double p)
-{
-	double q, r;
-
-	if (p == 0.)
-	{
-		return -6.230260 /* minus "infinity" */;
-	}
-	else if (p == 1.)
-	{
-		return 6.230260 /* "infinity" */;
-	}
-	else if (p < LOW)
-	{
-		/* Rational approximation for lower region */
-		q = sqrt(-2*log(p));
-		return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
-			((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
-	}
-	else if (p > HIGH)
-	{
-		/* Rational approximation for upper region */
-		q  = sqrt(-2*log(1-p));
-		return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5]) /
-			((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
-	}
-	else
-	{
-		/* Rational approximation for central region */
-    		q = p - 0.5;
-    		r = q*q;
-		return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q /
-			(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1);
-	}
 }
