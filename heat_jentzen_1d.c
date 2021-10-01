@@ -35,8 +35,6 @@ static inline void gen_force3D(double *fx, fftw_complex *gx, double *K,
 	LI N, LI N2, double TPI3, double PIL2, double sqdx, gsl_rng *rng);
 static inline void jentzen_kloeden_winkel_step(fftw_complex *vx, fftw_complex *gx,
 	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2);
-static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex *gx,
-	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2, gsl_rng *rng);
 
 int main(int argc, char **argv){
 
@@ -156,8 +154,7 @@ int main(int argc, char **argv){
 
 		gen_force3D(fx,gx,K,N,N2,TPI3,PIL2,sqdx,rng);
 		jentzen_kloeden_winkel_step(vx,gx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2);
-		//jentzen_kloeden_winkel_step_2(vx,gx,K,N2,sqdx,dt,visc,f0,TPI3,PIL2,rng);
-
+		
 		// to verify that the variance of each fourier mode follows theory
 		// 0 <= kx < N, 0 <= ky < N, 0 <= kz < N//2+1
 		vark1[it] = SQR(cabs(vx[1]));
@@ -303,40 +300,33 @@ static inline void jentzen_kloeden_winkel_step(fftw_complex *vx, fftw_complex *g
 
 // Jentzen, Kloeden and Winkel, Annals of Applied Probability 21.3 (2011): 908-950
 // see eq. 21
-static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex *gx,
+static inline void jentzen_kloeden_winkel_step_2(fftw_complex *vx, fftw_complex *gx, fftw_complex *tx,
 	double *K, LI N2, double sqdx, double dt, double visc, double f0, double TPI3, double PIL2, gsl_rng *rng){
 
 	LI i;
 	double cte;
 
 	// zero mode
-	cte    = sqrt(dt*f0)*TPI3;
+	cte    = sqrt(dt*f0);
 	// stochastic part
-	vx[0] += cte * gsl_ran_gaussian( rng, 1. );
+	vx[0] += cte * gx[0];
 
 	cte = dt*visc;
 	// deterministic part
 	for(i=1;i<N2;i++){
-		gx[i] = exp(-cte*SQR(K[i]));
-	}
-	for(i=1;i<N2;i++){
-		vx[i] *= gx[i];
+		vx[i] *= exp(-cte*SQR(K[i]));
 	}
 	// stochastic part
-	cte = sqrt(f0)*TPI3;
+	cte = sqrt(.5*f0/visc);
 	for(i=1;i<N2;i++){
-		gx[i]  = cte*gauss_kernel(K[i],PIL2);
-	}
-	cte = sqrt(.5/visc);
-	for(i=1;i<N2;i++){
-		gx[i] *= cte * sqrt((1.-exp(-2.*visc*dt*SQR(K[i])))/SQR(K[i]));
+		tx[i]  = cte * sqrt((1.-exp(-2.*visc*dt*SQR(K[i])))/SQR(K[i]));
 	}
 	for(i=1;i<N2;i++){
-		gx[i] *= gsl_ran_gaussian( rng, 1. );
+		tx[i] *= gx[i];
 	}
 	for(i=1;i<N2;i++){
 		// stochastic part
-		vx[i] += gx[i];
+		vx[i] += tx[i];
 	}
 
 }
